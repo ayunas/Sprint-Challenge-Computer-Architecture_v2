@@ -24,7 +24,3 @@ opc = {
     "SHR" : 0b10101101,
     "MOD" : 0b10100100,
 }
-
-branch_table = {
-    'pass' : 'pass'
-}
