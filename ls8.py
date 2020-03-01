@@ -1,9 +1,9 @@
-import sys
-from itertools import dropwhile
+import sys,os
+from itertools import dropwhile,groupby
 sys.path.append('./examples')
 from datetime import datetime
 import time, json
-from opcodes import opc  #operation code
+from opcodes import opc #operation code
 
 class LS8:
     def __init__(self):
@@ -16,24 +16,30 @@ class LS8:
         self.IS = self.registers[6] #interrupt status
         self.im = self.registers[5] #interrupt mask
         # self.i0,self.i1,self.i2,self.i3,self.i4,self.i5,self.i6,self.i7 = self.ram[-7:] #interrupt vector table
-        self.fl = '0b00000LGE'  #flag register (reserved)
+        self.fl = 0b00000000 #'0b00000LGE'  #flag register (reserved)
         self.time = datetime.now().second
         self.interrupts_enabled = True
+        self.branch = {'LDI' : self.ldi, 'PRN' : self.prn, 'AND' : self.and_handler, 'OR' : self.or_handler, 'XOR': self.xor, 'NOT':self.not_handler, 'SHL': self.shl, 'SHR': self.shr, 'MOD': self.mod, 'MUL': self.mul, 'ADD': self.add, 'PUSH': self.push_handler, 'POP': self.pop_handler, 'JMP': self.jmp, 'JEQ': self.jeq,'JNE': self.jne, 'CMP': self.cmp_handler, 'CALL': self.call, 'RET': self.ret, 'IRET': self.iret, 'ST': self.st, 'PRA': self.pra, 'ADDI': self.addi}
 
     def load(self):
-        print(sys.argv)
+        # print(sys.argv)
         if len(sys.argv) > 1:
-            data = open(sys.argv[1],'r')
+            if os.path.exists('./examples'):
+                file_obj = open(f"./examples/{sys.argv[1]}",'r')
+            else:
+                file_obj = open(sys.argv[1],'r')
         else:
             filename = input("enter the LS8 program you wish to run: ")
             try:
-                data = open(f"./examples/{filename}",'r')
-                # print([*data])
+                if os.path.exists('./examples'):
+                    file_obj = open(f"./examples/{filename}",'r')
+                else:
+                    file_obj = open(filename, 'r')
             except:
                 print(f"Could not open/read file {filename}. exiting...")
                 sys.exit(1)
         
-        clear_header = [*dropwhile(lambda l : l.startswith('#') or l == '\n',data)]
+        clear_header = [*dropwhile(lambda l : l.startswith('#') or l == '\n',file_obj)]
         clear_comments = [byte.split('#')[0].strip() for byte in clear_header]
         program = [b for b in clear_comments if b != '']
 
@@ -44,7 +50,7 @@ class LS8:
             # self.ram[address] = int(byte_str,2)
             address += 1
         print('LS8 assembly program:\n',program,'\nloaded into RAM successfully.')
-        data.close()
+        file_obj.close()
     
     def ram_read(self,n):
         # self.pc += 1
@@ -105,20 +111,26 @@ class LS8:
             notted_arr = ['1' if b == '0' else '0' for b in byte_arr]
             notted = ''.join(notted_arr)
             self.registers[reg_a] = int(notted,2)
+
         elif op == "SHL":
             bits = self.registers[reg_b]
-            # print('bits shift left', bits, bits > 8)
-            if bits > 8:
-                self.registers[reg_a] = 0
-            else:
-                self.registers[reg_a] = self.registers[reg_a] << bits
+            # print(f'bits shift left {bits}')
+            # if bits > 8:
+            #     self.registers[reg_a] = 0
+            # else:
+            # print(f"{self.registers[reg_a]:08b}")
+            shifted = self.registers[reg_a] << bits
+            binary_shifted = f"{shifted:08b}"
+            last_byte_str = binary_shifted[-8:]
+            self.registers[reg_a] = int(last_byte_str,2)
+            # print(f"{self.registers[reg_a]:08b}")
+
         elif op == "SHR":
             bits = self.registers[reg_b]
-            # print('bits shift right', bits, bits > 8)
-            if bits > 8:
-                self.registers[reg_a] = 0
-            else:
-                self.registers[reg_a] = self.registers[reg_a] >> bits
+            # print(f'bits shift right {bits}')
+            # print(f"{self.registers[reg_a]:08b}")
+            self.registers[reg_a] >>= bits
+            # print(f"{self.registers[reg_a]:08b}")
         elif op == "MOD":
             self.registers[reg_a] %= self.registers[reg_b]
         else:
@@ -192,167 +204,172 @@ class LS8:
         equal = self.fl & equal_mask
         return equal
 
+    def ldi(self):
+        reg = self.ram_read(1)
+        data = self.ram_read(2)
+        self.reg_write(reg,data)
+    
+    def prn(self):
+        reg = self.ram_read(1)
+        self.reg_read(reg)
+    
+    def pra(self):
+        reg = self.ram_read(1)
+        self.reg_read(reg,True)  #True to print out the ASCII equivalent of the code in the register
+
+    def and_handler(self):
+        reg_a = self.ram_read(1)
+        reg_b = self.ram_read(2)
+        self.alu('AND', reg_a,reg_b)
+    
+    def or_handler(self):
+        reg_a = self.ram_read(1)
+        reg_b = self.ram_read(2)
+        self.alu('OR', reg_a,reg_b)
+    
+    def xor(self):
+        reg_a = self.ram_read(1)
+        reg_b = self.ram_read(2)
+        self.alu('XOR', reg_a,reg_b)
+    
+    def not_handler(self):
+        reg_a = self.ram_read(1)
+        self.alu("NOT", reg_a)
+    
+    def shl(self):
+        reg_a = self.ram_read(1)
+        reg_b = self.ram_read(2)
+        self.alu('SHL', reg_a,reg_b)
+
+    def shr(self):
+        reg_a = self.ram_read(1)
+        reg_b = self.ram_read(2)
+        self.alu('SHR', reg_a,reg_b) 
+
+    def mod(self):
+        reg_a = self.ram_read(1)
+        reg_b = self.ram_read(2)
+        self.alu('MOD', reg_a,reg_b)
+    
+    def jmp(self):
+        #jump to address stored in the register operand
+        reg = self.ram_read(1)
+        self.jump(reg)
+        return True
+        # self.pc = self.registers[reg]
+        # print('JMP to ', self.pc)
+
+    def jeq(self):
+        equal = self.equal()
+        if equal:
+            reg = self.ram_read(1)
+            self.jump(reg)
+            return True
+        else:
+            return False
+    
+    def jne(self):
+        equal = self.equal()
+        if not equal:
+            reg = self.ram_read(1)
+            self.jump(reg)
+            return True
+        else:
+            return False
+
+    def cmp_handler(self):
+        reg_a = self.ram_read(1)
+        reg_b = self.ram_read(2)
+        self.alu('CMP',reg_a,reg_b)
+
+    def call(self):
+        next_opc = self.ram_read(2)
+        instruction_length = (ir >> 6) + 1 #inst_len = 2 for the CALL.  1 instruction + 1 operand only
+        next_pc = self.pc + instruction_length
+        self.push(next_pc) #push the ADDRESS of the next OPC not the opcode itself
+        reg = self.ram_read(1)
+        self.pc = self.registers[reg]
+        return True
+    
+    def ret(self):
+        address = self.pop()
+        self.pc = address
+        return True
+        #any instruction manually setting the pc, like returning from subroutine or jmp, don't process the typical increment of the while loop
+    
+    def st(self): #stores the value of register b in the memory address location stored in register a
+        reg_a = self.ram_read(1)
+        reg_b = self.ram_read(2)
+        mar = self.registers[reg_a]
+        mdr = self.registers[reg_b]
+        print('MAR:',mar, '(location in RAM to store the data from 2nd register)')
+        print('MDR', mdr)
+        self.ram_write(mar,mdr)
+        # print(self.ram)
+        
+    def iret(self):
+        pass
+
+    def mul(self):
+        reg_1 = self.ram_read(1)
+        reg_2 = self.ram_read(2)
+        self.alu('MUL', reg_1,reg_2)
+
+    def add(self):
+        reg_1 = self.ram_read(1)
+        reg_2 = self.ram_read(2)
+        self.alu('ADD', reg_1,reg_2)
+
+    def addi(self):
+        reg_a = self.ram_read(1)
+        val = self.ram_read(2)
+        reg_b = self.registers.index(0) #find first empty register to store new value
+        self.reg_write(reg_b,val)
+        self.alu('ADD',reg_a,reg_b)
+    
+    def push_handler(self):
+        reg = self.ram_read(1)
+        self.push(self.registers[reg])
+    
+    def pop_handler(self):
+        reg = self.ram_read(1)
+        self.pop(reg)
+
     def run(self):
         self.load()
         halted = False
         while halted == False:
             ir = self.ram[self.pc]  #instruction register.  the current instruction to process from the ls8 assembly program loaded
-            print([o for o in opc if opc[o] == ir])
 
-            if self.time_check() == True:
-                self.timer_interrupt()
-    
-            if ir == opc['LDI']:  #opc = operation code or the instruction
-                reg = self.ram_read(1)
-                data = self.ram_read(2)
-                self.reg_write(reg,data)
+            instruction = [o for o in opc if opc[o] == ir][0]
+            print(instruction)
+            if instruction == 'HLT':
+                self.increment_pc(ir)
+                halted = True
+                break
 
-            elif ir == opc['PRN']:
-                reg = self.ram_read(1)
-                self.reg_read(reg)
-            
-            elif ir == opc['MUL']:
-                reg_1 = self.ram_read(1)
-                reg_2 = self.ram_read(2)
-                self.alu('MUL', reg_1,reg_2)
-            
-            elif ir == opc['ADD']:
-                reg_1 = self.ram_read(1)
-                reg_2 = self.ram_read(2)
-                self.alu('ADD', reg_1,reg_2)
-            
-            elif ir == opc['PUSH']:
-                # reg = self.ram_read()
-                # val = self.reg_read(reg)
-                # self.push()
-                reg = self.ram_read(1)
-                self.push(self.registers[reg])
-            
-            elif ir == opc['POP']:
-                reg = self.ram_read(1)
-                self.pop(reg)
-            
-            elif ir == opc["JMP"]:
-                #jump to address stored in the register operand
-                # reg = self.ram[self.pc + 1]
-                reg = self.ram_read(1)
-                self.jump(reg)
-                # self.pc = self.registers[reg]
-                # print('JMP to ', self.pc)
-                continue
+            no_increments = ['JMP','JNE','JEQ','CALL','RET']
 
-            elif ir == opc["PRA"]:
-                reg = self.ram_read(1)
-                self.reg_read(reg,True)  #True to print out the ASCII equivalent of the code in the register
+            if instruction in no_increments:
+                incremented = self.branch[instruction]()
+                if not incremented:
+                    self.increment_pc(ir)
+            else: 
+                self.branch[instruction]()
+                self.increment_pc(ir)
 
-            elif ir == opc["CALL"]:
-                # next_opc = self.ram_read(2)
-                instruction_length = (ir >> 6) + 1 #inst_len = 2 for the CALL.  1 instruction + 1 operand only
-                next_pc = self.pc + instruction_length
-                self.push(next_pc) #push the ADDRESS of the next OPC not the opcode itself
-                reg = self.ram_read(1)
-                self.pc = self.registers[reg]
-                continue
-            
-            elif ir == opc["RET"]:
-                address = self.pop()
-                self.pc = address
-                continue  #any instruction manually setting the pc, like returning from subroutine or jmp, don't process the typical increment of the while loop
-            
-            elif ir == opc["ADDI"]:
-                reg_a = self.ram_read(1)
-                val = self.ram_read(2)
-                reg_b = self.registers.index(0) #find first empty register to store new value
-                self.reg_write(reg_b,val)
-                self.alu('ADD',reg_a,reg_b)
-
-            elif ir == opc["IRET"]:
-                pass
-
-            elif ir == opc["CMP"]:
-                reg_a = self.ram_read(1)
-                reg_b = self.ram_read(2)
-                self.alu('CMP',reg_a,reg_b)
-            
-            elif ir == opc["JEQ"]:
-                # equal_mask = 0b00000001
-                # equal = self.fl & equal_mask
-                equal = self.equal()
-                if equal:
-                    reg = self.ram_read(1)
-                    self.jump(reg)
-                    continue
-            
-            elif ir == opc["JNE"]:
-                # equal_mask = 0b00000001
-                # equal = self.fl & equal_mask
-                equal = self.equal()
-                if not equal:
-                    reg = self.ram_read(1)
-                    self.jump(reg)
-                    continue
-
-            elif ir == opc['ST']:
-                reg_a = self.ram_read(1)
-                reg_b = self.ram_read(2)
-                mar = self.registers[reg_a]
-                mdr = self.registers[reg_b]
-                self.ram_write(mar,mdr)
-                print(self.ram)
-            
-            elif ir == opc["AND"]: 
-                reg_a = self.ram_read(1)
-                reg_b = self.ram_read(2)
-                self.alu('AND', reg_a,reg_b)
-            
-            elif ir == opc["OR"]:
-                reg_a = self.ram_read(1)
-                reg_b = self.ram_read(2)
-                self.alu('OR', reg_a,reg_b)
-            
-            elif ir == opc["XOR"]:
-                reg_a = self.ram_read(1)
-                reg_b = self.ram_read(2)
-                self.alu('XOR', reg_a,reg_b)
-
-            elif ir == opc["SHL"]:
-                reg_a = self.ram_read(1)
-                reg_b = self.ram_read(2)
-                self.alu('SHL', reg_a,reg_b)
-
-            elif ir == opc["SHR"]:
-                reg_a = self.ram_read(1)
-                reg_b = self.ram_read(2)
-                self.alu('SHR', reg_a,reg_b) 
-
-            elif ir == opc["MOD"]:
-                reg_a = self.ram_read(1)
-                reg_b = self.ram_read(2)
-                self.alu('MOD', reg_a,reg_b)                   
-
-            elif ir == opc["NOT"]:
-                reg_a = self.ram_read(1)
-                self.alu("NOT", reg_a)
-
-            elif ir == opc['HLT']:
-                halted == True
-                # self.pc += 1
-                sys.exit(1)
-            else:
-                opcode = [o for o in opc if opc[o] == ir]
-                if not len(opcode):
-                    print(f'opcode {ir} not found, exiting...')
-                else:
-                    print('invalid opcode', opcode[0], 'exiting...')
-                sys.exit(1)
-
-            self.increment_pc(ir)
-    
     def __repr__(self):
-        return json.dumps({'RAM' : self.ram, 'Registers' : self.registers})
+        ram = [(list(dups)) for (t,dups) in groupby(self.ram)]
+        short_ram = []
+        for bit in ram:
+            if len(bit) >= 5:
+                bit = [0,'...',0]
+            short_ram += bit
+        return json.dumps({'RAM' : short_ram, 'Registers' : self.registers})
 
 if __name__ == '__main__':
     ls8 = LS8()
     ls8.run()
+    print(ls8)
     # print(ls8.ram)
     # print(ls8.registers)
